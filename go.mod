@@ -4,8 +4,10 @@ go 1.26.1
 
 require (
 	github.com/bendahl/uinput v1.7.0
+	github.com/dlasky/gotk3-layershell v0.0.0-20240515133811-5c5115f0d774
 	github.com/go-gst/go-gst v1.4.0
 	github.com/godbus/dbus/v5 v5.2.2
+	github.com/gotk3/gotk3 v0.6.5-0.20251124190141-e7a9e823ca35
 	github.com/pion/webrtc/v4 v4.2.11
 )
 

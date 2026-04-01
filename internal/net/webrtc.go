@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/ferbman/WayDesk/internal/input"
+	"github.com/ferbman/WayDesk/internal/portal"
+	"github.com/ferbman/WayDesk/internal/ui"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 )
@@ -17,6 +19,7 @@ type WebRTCSession struct {
 	videoTrack *webrtc.TrackLocalStaticSample
 	inputCtrl  *input.Controller
 	logger     *slog.Logger
+	stream     portal.StreamInfo
 }
 
 // InputMessage describes a remote control action coming from the browser.
@@ -31,7 +34,7 @@ type InputMessage struct {
 }
 
 // NewWebRTCSession initializes a WebRTC PeerConnection for video.
-func NewWebRTCSession(inputCtrl *input.Controller, logger *slog.Logger) (*WebRTCSession, error) {
+func NewWebRTCSession(stream portal.StreamInfo, inputCtrl *input.Controller, logger *slog.Logger) (*WebRTCSession, error) {
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
@@ -51,6 +54,8 @@ func NewWebRTCSession(inputCtrl *input.Controller, logger *slog.Logger) (*WebRTC
 	})
 
 	// Setup DataChannel support for remote control input
+	var lastCX, lastCY float64 // Keep track of latest cursor hover coordinates
+
 	pc.OnDataChannel(func(d *webrtc.DataChannel) {
 		logger.Info("datachannel opened", "label", d.Label())
 		d.OnMessage(func(msg webrtc.DataChannelMessage) {
@@ -66,9 +71,14 @@ func NewWebRTCSession(inputCtrl *input.Controller, logger *slog.Logger) (*WebRTC
 			// Route input message to kernel device controller
 			switch inMsg.Type {
 			case "mousemove":
-				_ = inputCtrl.MoveRelative(inMsg.X, inMsg.Y)
+				lastCX = inMsg.X
+				lastCY = inMsg.Y
+				// Update transparent GTK overlay cursor
+				localX := inMsg.X * float64(stream.Size[0])
+				localY := inMsg.Y * float64(stream.Size[1])
+				ui.UpdatePosition(localX, localY, true)
 			case "mouseclick":
-				_ = inputCtrl.MouseButton(inMsg.Button, inMsg.Down)
+				_ = inputCtrl.TeleportClick(lastCX, lastCY, stream.Position[0], stream.Position[1], stream.Size[0], stream.Size[1], inMsg.Button, inMsg.Down)
 			case "mousescroll":
 				_ = inputCtrl.MouseWheel(inMsg.DeltaY)
 			case "keydown":
@@ -111,6 +121,7 @@ func NewWebRTCSession(inputCtrl *input.Controller, logger *slog.Logger) (*WebRTC
 		pc:         pc,
 		videoTrack: videoTrack,
 		logger:     logger,
+		stream:     stream,
 	}, nil
 }
 

@@ -198,20 +198,41 @@ const htmlPlayer = `
         video.addEventListener('pointercancel', releasePointer);
 
         video.addEventListener('pointermove', (e) => {
-            if (lastX !== null && lastY !== null) {
-                const dx = e.clientX - lastX;
-                const dy = e.clientY - lastY;
-                if (dx !== 0 || dy !== 0) {
-                    sendInput({ type: "mousemove", cx: dx, cy: dy });
-                }
+            if (video.videoWidth === 0 || video.videoHeight === 0) return;
+
+            const rect = video.getBoundingClientRect();
+            const vidRatio = video.videoWidth / video.videoHeight;
+            const elRatio = rect.width / rect.height;
+
+            let drawWidth = rect.width;
+            let drawHeight = rect.height;
+            let offsetX = 0;
+            let offsetY = 0;
+
+            if (vidRatio > elRatio) {
+                // Letterboxing top and bottom
+                drawHeight = rect.width / vidRatio;
+                offsetY = (rect.height - drawHeight) / 2;
+            } else {
+                // Pillarboxing left and right
+                drawWidth = rect.height * vidRatio;
+                offsetX = (rect.width - drawWidth) / 2;
             }
-            // For desktop, track hover movements. For mobile, it tracks drags.
-            lastX = e.clientX;
-            lastY = e.clientY;
+
+            const cx = (e.clientX - rect.left - offsetX) / drawWidth;
+            const cy = (e.clientY - rect.top - offsetY) / drawHeight;
+            
+            if (cx >= 0 && cx <= 1 && cy >= 0 && cy <= 1) {
+                sendInput({ type: "mousemove", cx: cx, cy: cy });
+            }
         });
 
         // Clear hover tracking safely if mouse leaves
-        video.addEventListener('pointerleave', () => { if(!isDown) { lastX = null; lastY = null; }});
+        video.addEventListener('pointerleave', () => { 
+            if(!isDown) { 
+                // Wait for the next active drag or hover instead of lingering
+            }
+        });
 
         window.addEventListener('keydown', (e) => {
             if (document.activeElement === video || video.classList.contains('hidden') === false) {

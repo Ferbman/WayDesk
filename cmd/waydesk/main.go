@@ -6,10 +6,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
@@ -18,7 +20,50 @@ import (
 	"github.com/ferbman/WayDesk/internal/input"
 	"github.com/ferbman/WayDesk/internal/net"
 	"github.com/ferbman/WayDesk/internal/portal"
+	"github.com/ferbman/WayDesk/internal/ui"
 )
+
+// fetchRealMonitorOffset queries Hyprland to reconstruct the true physical offset of the shared monitor.
+// xdg-desktop-portal-hyprland has a known bug where it returns [0, 0] for all selected monitors.
+func fetchRealMonitorOffset(streamWidth, streamHeight int32) (int32, int32) {
+	out, err := exec.Command("hyprctl", "monitors", "-j").Output()
+	if err != nil {
+		return 0, 0
+	}
+
+	type Monitor struct {
+		Width   int32 `json:"width"`
+		Height  int32 `json:"height"`
+		X       int32 `json:"x"`
+		Y       int32 `json:"y"`
+		Focused bool  `json:"focused"`
+	}
+
+	var monitors []Monitor
+	if err := json.Unmarshal(out, &monitors); err != nil {
+		return 0, 0
+	}
+
+	var fallbackX, fallbackY int32
+	var matchCount int
+
+	for _, m := range monitors {
+		if m.Width == streamWidth && m.Height == streamHeight {
+			matchCount++
+			fallbackX, fallbackY = m.X, m.Y
+			// If we find the currently focused monitor, heavily favor it
+			if m.Focused {
+				return m.X, m.Y
+			}
+		}
+	}
+
+	if matchCount > 0 {
+		return fallbackX, fallbackY
+	}
+
+	return 0, 0
+}
 
 func main() {
 	// ── Flags ──────────────────────────────────────────────────────────
@@ -37,10 +82,17 @@ func main() {
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
 
-	if err := run(logger, *timeout); err != nil {
-		logger.Error("fatal", "error", err)
-		os.Exit(1)
-	}
+	// The WayDesk core (D-Bus, WebRTC, Capture) must run concurrently
+	// because the GTK3 window requires the main OS thread to run its event loop.
+	go func() {
+		if err := run(logger, *timeout); err != nil {
+			logger.Error("fatal", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Start the GTK3 Layer Shell overlay on the Main Thread. It blocks until exit.
+	ui.StartOverlay(logger)
 }
 
 func run(logger *slog.Logger, timeout time.Duration) error {
@@ -100,6 +152,12 @@ func run(logger *slog.Logger, timeout time.Duration) error {
 	}
 	stream := session.Streams[0]
 
+	// PATCH: Override broken portal position offsets (always 0,0) by checking hyprctl monitor map
+	realX, realY := fetchRealMonitorOffset(stream.Size[0], stream.Size[1])
+	stream.Position[0] = realX
+	stream.Position[1] = realY
+	logger.Info("reconstructed genuine monitor offsets from hyprctl", "realX", realX, "realY", realY)
+
 	// ── Phase 4: Virtual Input ─────────────────────────────────────────
 	inputCtrl, err := input.NewController(logger.With("component", "input"))
 	if err != nil {
@@ -109,10 +167,13 @@ func run(logger *slog.Logger, timeout time.Duration) error {
 	}
 
 	// 1. Initialize WebRTC Session
-	webrtcSess, err := net.NewWebRTCSession(inputCtrl, logger.With("component", "webrtc"))
+	webrtcSess, err := net.NewWebRTCSession(stream, inputCtrl, logger.With("component", "webrtc"))
 	if err != nil {
 		return fmt.Errorf("create webrtc session: %w", err)
 	}
+
+	// 2. Generate the GTK3 Layer Shell overlay exclusively bound to the shared monitor's coordinates
+	ui.CreateWindow(int(stream.Position[0]), int(stream.Position[1]), logger.With("component", "ui"))
 	defer webrtcSess.Close()
 
 	// 2. Initialize GStreamer Pipeline
@@ -170,5 +231,6 @@ func run(logger *slog.Logger, timeout time.Duration) error {
 	// ── Wait for shutdown signal ───────────────────────────────────────
 	<-ctx.Done()
 	logger.Info("shutting down gracefully")
+	ui.StopOverlay()
 	return nil
 }

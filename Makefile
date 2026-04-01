@@ -5,7 +5,7 @@ BUILD_DIR := bin
 CMD_DIR := ./cmd/waydesk
 
 # Build flags for production binary.
-LDFLAGS := -s -w
+LDFLAGS := -s -w -extldflags '-Wl,--allow-multiple-definition'
 
 build:
 	@echo "━━━ Building $(BINARY)..."

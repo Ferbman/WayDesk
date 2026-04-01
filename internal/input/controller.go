@@ -1,8 +1,10 @@
 package input
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os/exec"
 
 	"github.com/bendahl/uinput"
 )
@@ -10,8 +12,50 @@ import (
 // Controller manages the virtual uinput devices to simulate keyboard and mouse
 type Controller struct {
 	keyboard uinput.Keyboard
-	mouse    uinput.Mouse
+	mouse    uinput.Mouse // Relative movements (Trackpad mode fallback/scrolls)
+	touchpad uinput.TouchPad // Absolute targeting (Click Teleportation)
 	logger   *slog.Logger
+
+	totalWidth  int32
+	totalHeight int32
+}
+
+// fetchHyprlandDesktopSize executes `hyprctl` to find the global X,Y bounding box of all monitors.
+// This is critical to prevent `uinput` from stretching coords across multiple screens incorrectly!
+func fetchHyprlandDesktopSize() (int32, int32, error) {
+	out, err := exec.Command("hyprctl", "monitors", "-j").Output()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	type Monitor struct {
+		X      int32 `json:"x"`
+		Y      int32 `json:"y"`
+		Width  int32 `json:"width"`
+		Height int32 `json:"height"`
+	}
+
+	var monitors []Monitor
+	if err := json.Unmarshal(out, &monitors); err != nil {
+		return 0, 0, err
+	}
+
+	var maxX, maxY int32
+	for _, m := range monitors {
+		if m.X+m.Width > maxX {
+			maxX = m.X + m.Width
+		}
+		if m.Y+m.Height > maxY {
+			maxY = m.Y + m.Height
+		}
+	}
+
+	// Fallback minimum bounds
+	if maxX == 0 || maxY == 0 {
+		return 1920, 1080, nil
+	}
+
+	return maxX, maxY, nil
 }
 
 // NewController creates virtual input devices mapped to the specified screen resolution.
@@ -21,21 +65,83 @@ func NewController(logger *slog.Logger) (*Controller, error) {
 		return nil, fmt.Errorf("create keyboard: %w", err)
 	}
 
-	// Utilizing a relative Mouse instead of an Absolute Touchpad.
-	// Absolute touches are stretched by Wayland across ALL monitors in a multi-monitor setup.
-	// Relative movements (dx, dy) bypass this completely and move the cursor wherever it already is,
-	// acting just like a physical hardware mouse.
+	// Relative Mouse
 	m, err := uinput.CreateMouse("/dev/uinput", []byte("WayDesk Virtual Mouse"))
 	if err != nil {
 		kb.Close()
 		return nil, fmt.Errorf("create mouse: %w", err)
 	}
 
+	// Global Total Resolution Touchpad
+	totW, totH, err := fetchHyprlandDesktopSize()
+	if err != nil {
+		totW, totH = 1920, 1080 // Fallback
+		logger.Warn("could not fetch hyprctl bounds, falling back to 1080p for absolute teleporting", "err", err)
+	}
+
+	tp, err := uinput.CreateTouchPad("/dev/uinput", []byte("WayDesk Absolute Teleporter"), 0, totW, 0, totH)
+	if err != nil {
+		kb.Close()
+		m.Close()
+		return nil, fmt.Errorf("create touchpad: %w", err)
+	}
+	
+	logger.Info("init virtual teleporter touchpad bounds", "width", totW, "height", totH)
+
 	return &Controller{
-		keyboard: kb,
-		mouse:    m,
-		logger:   logger,
+		keyboard:    kb,
+		mouse:       m,
+		touchpad:    tp,
+		logger:      logger,
+		totalWidth:  totW,
+		totalHeight: totH,
 	}, nil
+}
+
+// TeleportClick maps the normalized coordinates (cx, cy) from the shared stream's resolution,
+// adds the stream's position offset (offsetX, offsetY), and sends an absolute touch exactly
+// to that global coordinate over the entire desktop.
+func (c *Controller) TeleportClick(cx, cy float64, streamOffsetX, streamOffsetY, streamWidth, streamHeight int32, button int, down bool) error {
+	// First convert normalized to stream pixel
+	localX := int32(cx * float64(streamWidth))
+	localY := int32(cy * float64(streamHeight))
+	
+	// Add offset to reach global position
+	globalX := streamOffsetX + localX
+	globalY := streamOffsetY + localY
+	
+	// Ensure we don't breach bounds logically
+	if globalX > c.totalWidth { globalX = c.totalWidth }
+	if globalY > c.totalHeight { globalY = c.totalHeight }
+	
+	c.logger.Debug("absolute click teleporter injected", "localX", localX, "localY", localY, "globalX", globalX, "globalY", globalY)
+
+	// Move cursor
+	if err := c.touchpad.MoveTo(globalX, globalY); err != nil {
+		return err
+	}
+
+	// Execute Click
+	switch button {
+	case 0:
+		if down {
+			return c.touchpad.LeftPress()
+		}
+		return c.touchpad.LeftRelease()
+	case 1:
+		if down {
+			return c.mouse.MiddlePress() // mouse is relative but press holds shared state
+		}
+		return c.mouse.MiddleRelease()
+	case 2:
+		if down {
+			return c.touchpad.RightPress()
+		}
+		return c.touchpad.RightRelease()
+	default:
+		c.logger.Debug("unsupported click teleporter button", "button", button)
+		return nil
+	}
 }
 
 // MoveRelative injects a relative mouse movement (dx, dy mapped to trackpad scaling)
