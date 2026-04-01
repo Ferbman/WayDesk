@@ -12,11 +12,8 @@ import (
 
 // SignalingServer serves the HTML player and handles SDP offer/answer exchange.
 type SignalingServer struct {
-	logger *slog.Logger
-	port   int
-
-	// OnSessionRequest is called when a client connects and requests a stream.
-	// It should return a configured WebRTCSession. 
+	logger           *slog.Logger
+	port             int
 	OnSessionRequest func() (*WebRTCSession, error)
 }
 
@@ -35,7 +32,6 @@ func (s *SignalingServer) Start() error {
 
 	addr := fmt.Sprintf("0.0.0.0:%d", s.port)
 	s.logger.Info("starting signaling server", "address", addr)
-	
 	return http.ListenAndServe(addr, nil)
 }
 
@@ -223,6 +219,15 @@ const htmlPlayer = `
                 sendInput({ type: "keydown", code: e.code });
             }
         });
+        
+        video.addEventListener('wheel', (e) => {
+            const direction = e.deltaY > 0 ? -1 : 1; 
+
+            sendInput({ 
+                type: "mousescroll", 
+                deltaY: direction
+            });
+        }, { passive: false });
 
         window.addEventListener('keyup', (e) => {
             if (document.activeElement === video || video.classList.contains('hidden') === false) {

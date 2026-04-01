@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	portalBusName   = "org.freedesktop.portal.Desktop"
+	portalBusName    = "org.freedesktop.portal.Desktop"
 	portalObjectPath = "/org/freedesktop/portal/desktop"
 
 	requestIface = "org.freedesktop.portal.Request"
@@ -25,9 +25,9 @@ const (
 type ResponseCode uint32
 
 const (
-	ResponseSuccess  ResponseCode = 0
+	ResponseSuccess   ResponseCode = 0
 	ResponseCancelled ResponseCode = 1
-	ResponseOther    ResponseCode = 2
+	ResponseOther     ResponseCode = 2
 )
 
 // Client manages the D-Bus connection to the XDG Desktop Portal.

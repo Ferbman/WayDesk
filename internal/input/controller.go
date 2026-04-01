@@ -72,6 +72,10 @@ func (c *Controller) MouseButton(button int, down bool) error {
 	}
 }
 
+func (c *Controller) MouseWheel(deltaY int32) error {
+	return c.mouse.Wheel(false, deltaY)
+}
+
 // KeyPress sends a down/up event for a linux keycode. We map web event.code to uinput keycodes.
 func (c *Controller) KeyPress(linuxKeyCode int, down bool) error {
 	if linuxKeyCode == 0 {

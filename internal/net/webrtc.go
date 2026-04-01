@@ -21,12 +21,13 @@ type WebRTCSession struct {
 
 // InputMessage describes a remote control action coming from the browser.
 type InputMessage struct {
-	Type   string  `json:"type"`             // mousemove, mouseclick, keydown, keyup
+	Type   string  `json:"type"`             // mousemove, mouseclick, mousescroll, keydown, keyup
 	X      float64 `json:"cx,omitempty"`     // 0.0 - 1.0 (normalized relative to screen bounds)
 	Y      float64 `json:"cy,omitempty"`     // 0.0 - 1.0
 	Code   string  `json:"code,omitempty"`   // Javascript KeyboardEvent.code
 	Button int     `json:"button,omitempty"` // 0=left, 1=middle, 2=right
 	Down   bool    `json:"down,omitempty"`   // true for press, false for release
+	DeltaY int32   `json:"deltaY,omitempty"` // Wheel scroll direction
 }
 
 // NewWebRTCSession initializes a WebRTC PeerConnection for video.
@@ -68,6 +69,8 @@ func NewWebRTCSession(inputCtrl *input.Controller, logger *slog.Logger) (*WebRTC
 				_ = inputCtrl.MoveRelative(inMsg.X, inMsg.Y)
 			case "mouseclick":
 				_ = inputCtrl.MouseButton(inMsg.Button, inMsg.Down)
+			case "mousescroll":
+				_ = inputCtrl.MouseWheel(inMsg.DeltaY)
 			case "keydown":
 				_ = inputCtrl.KeyPress(WebCodeToLinux[inMsg.Code], true)
 			case "keyup":

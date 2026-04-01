@@ -10,3 +10,16 @@
 # OS
 .DS_Store
 Thumbs.db
+
+# Go outputs and test files
+*.test
+*.out
+coverage.out
+
+# Environment variables and secrets
+.env
+*.env
+
+# Go workspace files (Go 1.18+)
+go.work
+go.work.sum
